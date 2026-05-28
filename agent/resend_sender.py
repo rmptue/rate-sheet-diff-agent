@@ -77,6 +77,12 @@ def send_via_resend(subject: str, html: str, recipient: str,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            # Resend sits behind Cloudflare. Cloudflare's bot signature
+            # check (challenge code 1010) blocks the default
+            # `Python-urllib/3.x` UA. Sending a real-looking UA + Accept
+            # header bypasses it.
+            "User-Agent": "rate-sheet-diff-agent/1.0 (https://github.com/rmptue/rate-sheet-diff-agent)",
+            "Accept": "application/json",
         },
         method="POST",
     )
