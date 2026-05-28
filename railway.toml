@@ -1,0 +1,14 @@
+# Railway deploy config (fallback to Streamlit Cloud).
+# To deploy:
+#   railway login
+#   railway init           # link to a new Railway project
+#   railway up             # builds and deploys this repo
+# Set ANTHROPIC_API_KEY in the Railway project's "Variables" tab.
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "streamlit run web/app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

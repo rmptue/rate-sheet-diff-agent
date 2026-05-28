@@ -1,0 +1,116 @@
+{
+  "name": "Rate Sheet Diff Agent",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "id": "trigger"
+    },
+    {
+      "parameters": {
+        "filePath": "={{$env.OLD_RATE_SHEET || '/data/Example_1.xlsx'}}"
+      },
+      "name": "Read OLD xlsx",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [460, 200],
+      "id": "read_old"
+    },
+    {
+      "parameters": {
+        "filePath": "={{$env.NEW_RATE_SHEET || '/data/Example_2.xlsx'}}"
+      },
+      "name": "Read NEW xlsx",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [460, 400],
+      "id": "read_new"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/diff",
+        "sendBinaryData": true,
+        "options": {}
+      },
+      "name": "Compute Diff (HTTP -> local FastAPI wrapper)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [720, 300],
+      "id": "diff_call",
+      "notes": "Calls a thin FastAPI wrapper around core.differ.diff_rate_sheets. Returns the same JSON shape as DiffResult.to_json_dict()."
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "create",
+        "model": "claude-sonnet-4-20250514",
+        "maxTokens": 2000,
+        "systemPrompt": "={{$json.system_prompt}}",
+        "userPrompt": "=Diff JSON:\n```json\n{{JSON.stringify($json.diff)}}\n```"
+      },
+      "name": "Claude Summarize",
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [980, 300],
+      "id": "claude",
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$env.RECIPIENT_EMAIL || 'ops@example.com'}}",
+        "subject": "={{$json.subject}}",
+        "message": "={{$json.html}}",
+        "options": {
+          "appendAttribution": false,
+          "bodyType": "html"
+        }
+      },
+      "name": "Send Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1240, 300],
+      "id": "gmail",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_ME",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {"node": "Read OLD xlsx", "type": "main", "index": 0},
+          {"node": "Read NEW xlsx", "type": "main", "index": 0}
+        ]
+      ]
+    },
+    "Read OLD xlsx": {
+      "main": [[{"node": "Compute Diff (HTTP -> local FastAPI wrapper)", "type": "main", "index": 0}]]
+    },
+    "Read NEW xlsx": {
+      "main": [[{"node": "Compute Diff (HTTP -> local FastAPI wrapper)", "type": "main", "index": 0}]]
+    },
+    "Compute Diff (HTTP -> local FastAPI wrapper)": {
+      "main": [[{"node": "Claude Summarize", "type": "main", "index": 0}]]
+    },
+    "Claude Summarize": {
+      "main": [[{"node": "Send Gmail", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {},
+  "meta": {
+    "description": "Structural mirror of the Python agent. Replace credentials and point the HTTP node at a thin FastAPI wrapper exposing core.differ. The Python pipeline remains the source of truth — n8n is the no-code surface."
+  }
+}
