@@ -1,17 +1,30 @@
-"""Streamlit demo UI — sidebar-driven layout with tabs.
+"""Streamlit demo UI — single-page, two-column, zero-friction.
 
 Run locally:   streamlit run web/app.py
 Deployed at:   https://rate-sheet-diff-agent-production.up.railway.app
 
-Design choices that survive Streamlit's CSS quirks:
-    - Theme color + background set via .streamlit/config.toml (native, not CSS).
-    - Sidebar for controls so they never compete with the main content.
-    - st.container(border=True) instead of custom card divs — bordered
-      cards that Streamlit actually renders consistently.
-    - st.tabs() for switching between Overview / Detail / Email — fewer
-      vertical scroll-to-find moments.
-    - Minimal, conservative CSS: only the bits that reliably stick
-      (block-container padding, headline weight, metric padding).
+Design principle: the reviewer should land and immediately see the demo
+running. No tabs, no setup, no "what do I click first" — sample data is
+loaded by default, both halves of the story (the diff *and* the AI email
+it produced) are visible at the same time, and the "Email it to me"
+button is the loudest thing on the page.
+
+Layout:
+
+    ┌─────────────────────────── HERO ───────────────────────────┐
+    │  Title · 1-line value prop · primary CTA                   │
+    └────────────────────────────────────────────────────────────┘
+    ┌─────────────── METRIC RIBBON (4 stat cards) ───────────────┐
+    └────────────────────────────────────────────────────────────┘
+    ┌──────────── RE-DATED CALLOUT (only when present) ──────────┐
+    └────────────────────────────────────────────────────────────┘
+    ┌─────────────────────┐  ┌─────────────────────────────────┐
+    │  WHAT CHANGED       │  │  AI-WRITTEN EMAIL               │
+    │  (diff tables)      │  │  Subject + body                 │
+    │                     │  │  ┌─ Email me a copy ─────────┐  │
+    │                     │  │  │  email input + SEND       │  │
+    │                     │  │  └───────────────────────────┘  │
+    └─────────────────────┘  └─────────────────────────────────┘
 """
 from __future__ import annotations
 
@@ -25,7 +38,6 @@ sys.path.insert(0, str(ROOT))
 
 import streamlit as st
 
-# Mirror Streamlit / Railway secrets into env.
 try:
     for key in ("ANTHROPIC_API_KEY", "RESEND_API_KEY", "RESEND_FROM"):
         if key in st.secrets and not os.environ.get(key):
@@ -45,72 +57,246 @@ st.set_page_config(
     page_title="Rate Sheet Diff Agent",
     page_icon="◆",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",  # Get the sidebar out of the way.
 )
 
 
 # ---------------------------------------------------------------------------
-# Light, conservative CSS — only what reliably sticks in Streamlit.
+# Visual polish — kept tight, only what reliably sticks in Streamlit.
 # ---------------------------------------------------------------------------
 
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 2rem; padding-bottom: 4rem; max-width: 1200px; }
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 4rem;
+        max-width: 1280px;
+    }
+    h1, h2, h3, h4 { letter-spacing: -0.02em !important; }
 
-    /* Tighter headings */
-    h1 { font-weight: 700 !important; letter-spacing: -0.02em !important; }
-    h2 { font-weight: 600 !important; letter-spacing: -0.01em !important; margin-top: 0 !important; }
-    h3 { font-weight: 600 !important; letter-spacing: -0.01em !important; }
+    /* Hero strip */
+    .hero {
+        background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #db2777 100%);
+        color: white;
+        padding: 36px 44px;
+        border-radius: 20px;
+        margin-bottom: 28px;
+        box-shadow: 0 10px 30px -10px rgba(79,70,229,.35);
+    }
+    .hero-eyebrow {
+        display: inline-block;
+        background: rgba(255,255,255,.18);
+        color: white;
+        padding: 5px 12px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 14px;
+    }
+    .hero h1 {
+        font-size: 38px !important;
+        margin: 0 0 10px 0 !important;
+        color: white !important;
+        font-weight: 700 !important;
+        line-height: 1.1;
+    }
+    .hero p {
+        font-size: 16px;
+        line-height: 1.55;
+        color: rgba(255,255,255,.92);
+        max-width: 720px;
+        margin: 0;
+    }
 
-    /* Metric cards — bigger numbers, smaller labels */
+    /* Metric cards — bigger, more product-y */
     [data-testid="stMetric"] {
         background: white;
-        padding: 18px 20px;
-        border-radius: 12px;
+        padding: 20px 22px;
+        border-radius: 14px;
         border: 1px solid #e2e8f0;
+        box-shadow: 0 1px 2px rgba(15,23,42,.04);
+        transition: transform .15s ease;
     }
+    [data-testid="stMetric"]:hover { transform: translateY(-2px); }
     [data-testid="stMetricValue"] {
-        font-size: 32px !important;
+        font-size: 38px !important;
         font-weight: 700 !important;
+        color: #0f172a !important;
     }
     [data-testid="stMetricLabel"] {
         font-size: 11px !important;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.08em;
         color: #64748b !important;
         font-weight: 600 !important;
     }
-    [data-testid="stMetricDelta"] { font-size: 11px !important; }
+    [data-testid="stMetricDelta"] { font-size: 11px !important; color: #94a3b8 !important; }
     [data-testid="stMetricDelta"] svg { display: none; }
 
-    /* Hide Streamlit chrome */
-    #MainMenu, footer, header { visibility: hidden; }
-
-    /* Sidebar polish */
-    [data-testid="stSidebar"] {
-        background: white;
-        border-right: 1px solid #e2e8f0;
+    /* Big primary button */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #4f46e5, #7c3aed) !important;
+        color: white !important;
+        border: none !important;
+        padding: 14px 24px !important;
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 14px rgba(79,70,229,.35) !important;
+        transition: all .15s ease !important;
     }
-    [data-testid="stSidebar"] .block-container { padding-top: 1.5rem; }
+    .stButton > button[kind="primary"]:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 20px rgba(79,70,229,.45) !important;
+    }
+    .stButton > button[kind="primary"]:disabled {
+        background: #cbd5e1 !important;
+        box-shadow: none !important;
+        color: #64748b !important;
+    }
 
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] {
+    /* Section heading */
+    .section-title {
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #4f46e5;
+        margin-bottom: 8px;
+    }
+    .section-subtitle {
+        font-size: 22px;
+        font-weight: 700;
+        color: #0f172a;
+        margin: 0 0 4px 0;
+        letter-spacing: -0.02em;
+    }
+    .section-desc {
+        font-size: 13px;
+        color: #64748b;
+        margin: 0 0 16px 0;
+    }
+
+    /* Re-dated banner */
+    .redated-callout {
+        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+        border: 1px solid #fbbf24;
+        border-radius: 14px;
+        padding: 18px 22px;
+        margin-bottom: 24px;
+    }
+    .redated-callout-title {
+        color: #78350f;
+        font-size: 14px;
+        font-weight: 700;
+        margin-bottom: 6px;
+    }
+    .redated-callout-body {
+        color: #92400e;
+        font-size: 13px;
+        line-height: 1.55;
+    }
+
+    /* Email preview frame */
+    .email-frame {
         background: white;
         border: 1px solid #e2e8f0;
-        border-radius: 10px 10px 0 0;
-        padding: 10px 18px;
-        font-weight: 500;
+        border-radius: 14px;
+        padding: 0;
+        overflow: hidden;
     }
-    .stTabs [aria-selected="true"] {
-        background: #4f46e5 !important;
-        color: white !important;
-        border-color: #4f46e5 !important;
+    .email-meta {
+        background: #f8fafc;
+        border-bottom: 1px solid #e2e8f0;
+        padding: 14px 20px;
+        font-size: 13px;
+    }
+    .email-meta-row {
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+        margin-bottom: 6px;
+    }
+    .email-meta-row:last-child { margin-bottom: 0; }
+    .email-meta-label {
+        color: #94a3b8;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        min-width: 70px;
+    }
+    .email-meta-value { color: #0f172a; font-weight: 500; }
+
+    /* Send card */
+    .send-card {
+        background: linear-gradient(135deg, #eef2ff 0%, #ddd6fe 100%);
+        border: 1px solid #c7d2fe;
+        border-radius: 14px;
+        padding: 22px;
+        margin-top: 20px;
+    }
+    .send-card-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: #312e81;
+        margin: 0 0 4px 0;
+    }
+    .send-card-desc {
+        font-size: 12.5px;
+        color: #4338ca;
+        margin: 0 0 14px 0;
+        line-height: 1.5;
     }
 
-    /* Dataframe — clean borders */
-    .stDataFrame { border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+    /* Status pill */
+    .pill {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    .pill-success { background: #d1fae5; color: #065f46; }
+    .pill-muted   { background: #f1f5f9; color: #64748b; }
+    .pill-info    { background: #dbeafe; color: #1e40af; }
+
+    /* Inputs */
+    .stTextInput input {
+        border-radius: 10px !important;
+        border: 1px solid #cbd5e1 !important;
+        padding: 10px 14px !important;
+        font-size: 14px !important;
+    }
+    .stTextInput input:focus {
+        border-color: #4f46e5 !important;
+        box-shadow: 0 0 0 3px rgba(79,70,229,.1) !important;
+    }
+
+    /* Radio pills inside expander */
+    div[role="radiogroup"] { gap: 6px !important; }
+    div[role="radiogroup"] > label {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 13px;
+        cursor: pointer;
+    }
+    div[role="radiogroup"] > label:has(input:checked) {
+        border-color: #4f46e5;
+        background: #eef2ff;
+        font-weight: 600;
+    }
+
+    /* Dataframe */
+    .stDataFrame { border-radius: 10px; overflow: hidden; }
+
+    /* Hide Streamlit chrome */
+    #MainMenu, footer, header, [data-testid="stToolbar"] { visibility: hidden; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -118,311 +304,291 @@ st.markdown(
 
 
 # ---------------------------------------------------------------------------
-# Sidebar — data source + status
+# Hero
 # ---------------------------------------------------------------------------
 
-with st.sidebar:
-    st.markdown("### Rate Sheet Diff Agent")
-    st.caption("AI automation showcase")
-    st.divider()
+st.markdown(
+    """
+    <div class="hero">
+      <span class="hero-eyebrow">AI Automation · Take-home Showcase</span>
+      <h1>Compare two rate sheets. Get the email written for you.</h1>
+      <p>Drop in two Excel rate sheets — the deterministic engine finds every change
+      (including <b>re-dated lanes</b> that naive diffs miss), and Claude narrates
+      it into a business-readable email you can send to yourself in one click.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-    st.markdown("**Data source**")
-    source = st.radio(
-        "Data source",
-        ["Test fixtures",
-         "Full sample (783 rows)",
-         "Upload my own"],
+
+# ---------------------------------------------------------------------------
+# Data source (sticky bar — collapsed-by-default expander)
+# ---------------------------------------------------------------------------
+
+# Default: bundled test fixtures (small + every change type). Reviewer
+# can switch to the full 783-row sample or upload their own from the
+# expander below.
+DEFAULT_OLD = ROOT / "data" / "Test_OLD.xlsx"
+DEFAULT_NEW = ROOT / "data" / "Test_NEW.xlsx"
+
+if "data_choice" not in st.session_state:
+    st.session_state["data_choice"] = "Test fixtures (recommended)"
+
+old_path = DEFAULT_OLD
+new_path = DEFAULT_NEW
+data_label = "Test fixtures · 14 rows · one of every change type"
+
+with st.expander("📂  Data source · " + data_label, expanded=False):
+    choice = st.radio(
+        "Pick data source",
+        ["Test fixtures (recommended)",
+         "Full 783-row brief sample",
+         "Upload my own .xlsx files"],
+        key="data_choice",
+        horizontal=True,
         label_visibility="collapsed",
     )
 
-    uploaded_old = uploaded_new = None
-    if source == "Upload my own":
-        uploaded_old = st.file_uploader("OLD .xlsx", type=["xlsx"], key="old")
-        uploaded_new = st.file_uploader("NEW .xlsx", type=["xlsx"], key="new")
-
-    st.divider()
-    st.markdown("**Status**")
-    claude_ok = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    resend_ok = bool(os.environ.get("RESEND_API_KEY"))
-    st.markdown(f"{'🟢' if claude_ok else '⚪'} Claude narration")
-    st.markdown(f"{'🟢' if resend_ok else '⚪'} Resend email")
-
-    st.divider()
-    st.caption(
-        "[GitHub repo](https://github.com/rmptue/rate-sheet-diff-agent) · "
-        "Built as a take-home AI automation showcase."
-    )
-
-
-# ---------------------------------------------------------------------------
-# Resolve data source
-# ---------------------------------------------------------------------------
-
-old_path: Path | None = None
-new_path: Path | None = None
-data_label = ""
-
-if source == "Test fixtures":
-    old_path = ROOT / "data" / "Test_OLD.xlsx"
-    new_path = ROOT / "data" / "Test_NEW.xlsx"
-    data_label = "Test fixtures · 14 rows · one of every change type"
-elif source == "Full sample (783 rows)":
-    old_path = ROOT / "data" / "Example_1.xlsx"
-    new_path = ROOT / "data" / "Example_2.xlsx"
-    data_label = "Original brief sample · 783 rows · 6 real changes"
-elif uploaded_old and uploaded_new:
-    tmp = Path("/tmp"); tmp.mkdir(parents=True, exist_ok=True)
-    old_path = tmp / "old.xlsx"
-    new_path = tmp / "new.xlsx"
-    old_path.write_bytes(uploaded_old.getvalue())
-    new_path.write_bytes(uploaded_new.getvalue())
-    data_label = f"Uploaded · {uploaded_old.name} vs {uploaded_new.name}"
+    if choice == "Test fixtures (recommended)":
+        old_path = ROOT / "data" / "Test_OLD.xlsx"
+        new_path = ROOT / "data" / "Test_NEW.xlsx"
+        data_label = "Test fixtures · 14 rows · one of every change type"
+    elif choice == "Full 783-row brief sample":
+        old_path = ROOT / "data" / "Example_1.xlsx"
+        new_path = ROOT / "data" / "Example_2.xlsx"
+        data_label = "Original brief · 783 rows · 6 real changes"
+    else:
+        col_u1, col_u2 = st.columns(2)
+        f_old = col_u1.file_uploader("OLD .xlsx", type=["xlsx"])
+        f_new = col_u2.file_uploader("NEW .xlsx", type=["xlsx"])
+        if f_old and f_new:
+            tmp = Path("/tmp"); tmp.mkdir(parents=True, exist_ok=True)
+            old_path = tmp / "old.xlsx"
+            new_path = tmp / "new.xlsx"
+            old_path.write_bytes(f_old.getvalue())
+            new_path.write_bytes(f_new.getvalue())
+            data_label = f"Uploaded · {f_old.name} vs {f_new.name}"
+        else:
+            st.info("Upload both files to continue with custom data.")
+            old_path = new_path = None
 
 
-# ---------------------------------------------------------------------------
-# Header
-# ---------------------------------------------------------------------------
-
-header_col1, header_col2 = st.columns([3, 2])
-with header_col1:
-    st.markdown(
-        """
-        <div style="margin-bottom:8px">
-          <span style="background:#eef2ff;color:#4f46e5;padding:4px 10px;
-                       border-radius:999px;font-size:11px;font-weight:600;
-                       text-transform:uppercase;letter-spacing:.06em">
-            AI Automation · Take-home Showcase
-          </span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown("# Rate Sheet Diff Agent")
-    st.markdown(
-        "<p style='color:#64748b;font-size:15px;line-height:1.6;margin-top:-8px'>"
-        "Deterministic Excel rate-sheet diff with <b style='color:#0f172a'>re-dated lane reconciliation</b>, "
-        "narrated by Claude into a business-readable email. Pure-Python audit; "
-        "the LLM only narrates — it never decides whether numbers changed.</p>",
-        unsafe_allow_html=True,
-    )
-
-with header_col2:
-    with st.container(border=True):
-        st.markdown("**How it works**")
-        st.markdown(
-            "<span style='font-size:13px;color:#475569;line-height:1.6'>"
-            "<b>1.</b> Deterministic engine classifies New / Updated / Deleted.<br>"
-            "<b>2.</b> Reconciliation pass pairs <i>re-dated lanes</i> "
-            "(same Customer + Origin + Destination, different Effective Date).<br>"
-            "<b>3.</b> Claude narrates the structured diff into HTML email.<br>"
-            "<b>4.</b> Resend delivers it to your inbox."
-            "</span>",
-            unsafe_allow_html=True,
-        )
-
-if not old_path or not new_path:
-    st.divider()
-    st.info("← Pick a data source in the sidebar to continue.")
+if not (old_path and new_path):
     st.stop()
 
 
 # ---------------------------------------------------------------------------
-# Compute diff
+# Compute diff + draft email (cached on data identity)
 # ---------------------------------------------------------------------------
 
-with st.spinner("Loading and diffing..."):
+with st.spinner("Loading sheets and computing diff…"):
     old = load_rate_sheet(old_path)
     new = load_rate_sheet(new_path)
     diff = diff_rate_sheets(old, new)
 
+cache_key = f"draft::{old_path.name}::{new_path.name}::{len(diff.updated)}::{len(diff.redated)}"
+if st.session_state.get("draft_key") != cache_key:
+    with st.spinner("Claude is writing the email summary…"):
+        st.session_state["draft"] = summarize_diff(diff)
+        st.session_state["draft_key"] = cache_key
+
+draft = st.session_state["draft"]
 raw = diff.counts_raw()
 rec = diff.counts_reconciled()
 
-st.divider()
-st.caption(f"📂 {data_label}")
-
 
 # ---------------------------------------------------------------------------
-# Top metric ribbon
+# Metric ribbon
 # ---------------------------------------------------------------------------
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Updated", rec["updated"])
 m2.metric("Re-dated lanes", rec["redated"])
-m3.metric("New", rec["new"], delta=f"raw view: {raw['new']}", delta_color="off")
-m4.metric("Deleted", rec["deleted"], delta=f"raw view: {raw['deleted']}", delta_color="off")
+m3.metric("New", rec["new"], delta=f"raw: {raw['new']}", delta_color="off")
+m4.metric("Deleted", rec["deleted"], delta=f"raw: {raw['deleted']}", delta_color="off")
 
 
 # ---------------------------------------------------------------------------
-# Tabs: Diff Detail / AI Email / Send
+# Re-dated callout (only when relevant — the centerpiece)
 # ---------------------------------------------------------------------------
 
 st.markdown("<br>", unsafe_allow_html=True)
-tab_diff, tab_email, tab_send = st.tabs(["📊  Diff Detail", "✉️  AI Email", "📨  Send"])
 
-
-# --- Tab 1: Diff Detail --------------------------------------------------
-with tab_diff:
-
-    if diff.redated:
-        with st.container(border=True):
-            st.markdown(
-                f"<div style='color:#92400e;background:#fffbeb;padding:14px 16px;"
-                f"border-radius:8px;margin-bottom:14px;font-size:13.5px;line-height:1.55'>"
-                f"<b>🔁 {len(diff.redated)} re-dated lane{'s' if len(diff.redated)>1 else ''} detected.</b> "
-                f"A naive row-level diff would report these as <code>New</code> + <code>Deleted</code> rows. "
-                f"They are the same logical lane being re-issued on a new Effective Date — "
-                f"the reconciliation pass pairs them so the email reflects the real change."
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-            st.dataframe(
-                pd.DataFrame([
-                    {
-                        "Customer": p.deleted.customer,
-                        "Origin": p.deleted.origin,
-                        "Destination": p.deleted.destination,
-                        "Old Effective": p.old_effective.isoformat(),
-                        "New Effective": p.new_effective.isoformat(),
-                        "Rate": p.new.rate,
-                    }
-                    for p in diff.redated
-                ]),
-                use_container_width=True, hide_index=True,
-            )
-
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        with st.container(border=True):
-            st.markdown("##### Updated rows")
-            if diff.updated:
-                rows = []
-                for u in diff.updated:
-                    for d in u.deltas:
-                        change_dir = ""
-                        if d.field == "rate":
-                            change_dir = "↓" if d.new < d.old else "↑"
-                        rows.append({
-                            "Customer": u.new.customer,
-                            "Lane": f"{u.new.origin} → {u.new.destination}",
-                            "Effective": u.new.effective_date.isoformat(),
-                            "Field": d.field.replace("_", " "),
-                            "Change": f"{d.old} {change_dir} {d.new}".strip(),
-                        })
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-            else:
-                st.caption("No updated rows.")
-
-    with col_b:
-        with st.container(border=True):
-            st.markdown("##### Genuinely new lanes")
-            if diff.new_after_reconcile:
-                st.dataframe(pd.DataFrame([{
-                    "Customer": r.customer,
-                    "Lane": f"{r.origin} → {r.destination}",
-                    "Effective": r.effective_date.isoformat(),
-                    "Rate": r.rate,
-                } for r in diff.new_after_reconcile]),
-                use_container_width=True, hide_index=True)
-            else:
-                st.caption("None.")
-
-        with st.container(border=True):
-            st.markdown("##### Genuinely deleted lanes")
-            if diff.deleted_after_reconcile:
-                st.dataframe(pd.DataFrame([{
-                    "Customer": r.customer,
-                    "Lane": f"{r.origin} → {r.destination}",
-                    "Effective": r.effective_date.isoformat(),
-                    "Rate": r.rate,
-                } for r in diff.deleted_after_reconcile]),
-                use_container_width=True, hide_index=True)
-            else:
-                st.caption("None.")
-
-
-# --- Tab 2: AI email preview ----------------------------------------------
-with tab_email:
-    cache_key = f"draft::{old_path.name}::{new_path.name}::{len(diff.updated)}::{len(diff.redated)}"
-    if st.session_state.get("draft_key") != cache_key:
-        with st.spinner("Asking Claude to narrate the diff…"):
-            st.session_state["draft"] = summarize_diff(diff)
-            st.session_state["draft_key"] = cache_key
-
-    draft = st.session_state["draft"]
-
-    pill_color = "#059669" if draft.source == "claude" else "#64748b"
-    pill_bg = "#ecfdf5" if draft.source == "claude" else "#f1f5f9"
-    pill_text = "✓ Narrated by Claude (Sonnet 4)" if draft.source == "claude" else f"Deterministic renderer · {draft.source}"
-
+if diff.redated:
+    redated_list = "<br>".join(
+        f"&nbsp;&nbsp;<b>Customer {p.deleted.customer}</b> · "
+        f"{p.deleted.origin} → {p.deleted.destination} · "
+        f"Effective Date shifted <b>{p.old_effective.isoformat()} → {p.new_effective.isoformat()}</b>"
+        for p in diff.redated
+    )
     st.markdown(
-        f"<span style='background:{pill_bg};color:{pill_color};padding:5px 12px;"
-        f"border-radius:999px;font-size:11px;font-weight:600'>{pill_text}</span>",
+        f"""
+        <div class="redated-callout">
+          <div class="redated-callout-title">🔁 Re-dated lane{'s' if len(diff.redated)>1 else ''} detected — the centerpiece case</div>
+          <div class="redated-callout-body">
+            A naive row-level diff would report {len(diff.redated)} of the
+            New + {len(diff.redated)} of the Deleted rows as unrelated changes.
+            They are the same logical lane being re-issued on a new Effective Date.
+            The reconciliation pass pairs them so the email reflects the real change.
+            <br><br>{redated_list}
+          </div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
-    with st.container(border=True):
-        st.caption("SUBJECT")
-        st.markdown(f"#### {draft.subject}")
 
-    st.markdown("**Body preview**")
-    st.components.v1.html(
-        f"<div style='border:1px solid #e2e8f0;border-radius:12px;padding:24px;"
-        f"background:white;font-family:Inter,sans-serif'>{draft.html}</div>",
-        height=620, scrolling=True,
+# ---------------------------------------------------------------------------
+# Two-column main: diff (left) + email + send (right)
+# ---------------------------------------------------------------------------
+
+left, right = st.columns([5, 7], gap="large")
+
+
+# --- LEFT: What changed --------------------------------------------------
+with left:
+    st.markdown(
+        """
+        <div>
+          <div class="section-title">▸ Step 1</div>
+          <div class="section-subtitle">What changed</div>
+          <p class="section-desc">Deterministic engine output — pure Python, fully auditable, the LLM never touches these numbers.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
+    if diff.updated:
+        st.markdown("**Updated rows**")
+        rows = []
+        for u in diff.updated:
+            for d in u.deltas:
+                arrow = ""
+                if d.field == "rate":
+                    arrow = " ↓" if d.new < d.old else " ↑"
+                rows.append({
+                    "Customer": u.new.customer,
+                    "Lane": f"{u.new.origin} → {u.new.destination}",
+                    "Effective": u.new.effective_date.isoformat(),
+                    "Field": d.field.replace("_", " "),
+                    "Old → New": f"{d.old} → {d.new}{arrow}",
+                })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-# --- Tab 3: Send ----------------------------------------------------------
-with tab_send:
+    if diff.new_after_reconcile:
+        st.markdown("**Genuinely new lanes**")
+        st.dataframe(pd.DataFrame([{
+            "Customer": r.customer,
+            "Lane": f"{r.origin} → {r.destination}",
+            "Effective": r.effective_date.isoformat(),
+            "Rate": r.rate,
+        } for r in diff.new_after_reconcile]), use_container_width=True, hide_index=True)
+
+    if diff.deleted_after_reconcile:
+        st.markdown("**Genuinely deleted lanes**")
+        st.dataframe(pd.DataFrame([{
+            "Customer": r.customer,
+            "Lane": f"{r.origin} → {r.destination}",
+            "Effective": r.effective_date.isoformat(),
+            "Rate": r.rate,
+        } for r in diff.deleted_after_reconcile]), use_container_width=True, hide_index=True)
+
+    if not (diff.updated or diff.new_after_reconcile or diff.deleted_after_reconcile):
+        st.caption("No changes detected between the two sheets.")
+
+
+# --- RIGHT: AI-written email + Send --------------------------------------
+with right:
+    st.markdown(
+        """
+        <div>
+          <div class="section-title">▸ Step 2</div>
+          <div class="section-subtitle">AI-written email</div>
+          <p class="section-desc">Claude reads the structured diff (left) and narrates it into a business email. Numbers are locked — model only writes prose.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    pill_class = "pill-success" if draft.source == "claude" else "pill-muted"
+    pill_text = "✓ Narrated by Claude · Sonnet 4" if draft.source == "claude" else f"Deterministic renderer · {draft.source}"
+    st.markdown(f'<span class="pill {pill_class}">{pill_text}</span>', unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Email preview with a fake mail header
+    st.markdown(
+        f"""
+        <div class="email-frame">
+          <div class="email-meta">
+            <div class="email-meta-row">
+              <span class="email-meta-label">From</span>
+              <span class="email-meta-value">Rate Sheet Demo &lt;onboarding@resend.dev&gt;</span>
+            </div>
+            <div class="email-meta-row">
+              <span class="email-meta-label">Subject</span>
+              <span class="email-meta-value">{draft.subject}</span>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.components.v1.html(
+        f"<div style='border:1px solid #e2e8f0;border-top:none;border-radius:0 0 14px 14px;"
+        f"padding:24px;background:white;font-family:-apple-system,Inter,sans-serif'>"
+        f"{draft.html}</div>",
+        height=480, scrolling=True,
+    )
+
+    # --- The headline action: SEND ---
     if "sends_this_session" not in st.session_state:
         st.session_state["sends_this_session"] = 0
     MAX_SENDS = 3
 
-    draft = st.session_state.get("draft")
-    if not draft:
-        st.info("Open the **AI Email** tab first to generate the draft.")
-        st.stop()
+    resend_ready = bool(os.environ.get("RESEND_API_KEY"))
 
-    with st.container(border=True):
-        st.markdown("##### Email this summary to yourself")
-        st.caption(
-            "We send via Resend's shared demo sender. Recipient is locked "
-            "to whatever you type below — no third-party relay. Up to "
-            f"{MAX_SENDS} sends per session."
-        )
+    st.markdown(
+        f"""
+        <div class="send-card">
+          <div class="send-card-title">✉️  Email this to yourself</div>
+          <div class="send-card-desc">
+            {"Sends a real email via Resend. Recipient is locked to whatever you type below — no relay. "
+             f"Up to {MAX_SENDS} sends per browser session."
+             if resend_ready else
+             "Send is disabled — server has no RESEND_API_KEY. The preview above is the deliverable."}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
+    col_in, col_btn = st.columns([3, 2])
+    with col_in:
         recipient = st.text_input(
-            "Your email address",
+            "Your email",
             placeholder="you@yourcompany.com",
+            label_visibility="collapsed",
+        )
+    with col_btn:
+        clicked = st.button(
+            "Email this to me  →",
+            type="primary",
+            disabled=not resend_ready,
+            use_container_width=True,
         )
 
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            disabled = not bool(os.environ.get("RESEND_API_KEY"))
-            clicked = st.button(
-                "Send to me",
-                type="primary",
-                disabled=disabled,
-                use_container_width=True,
-            )
-        with c2:
-            if disabled:
-                st.markdown(
-                    "<span style='background:#f1f5f9;color:#64748b;padding:5px 12px;"
-                    "border-radius:999px;font-size:11px;font-weight:500'>"
-                    "Sending disabled — server has no Resend key</span>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                remaining = MAX_SENDS - st.session_state["sends_this_session"]
-                st.markdown(
-                    f"<span style='background:#eef2ff;color:#4f46e5;padding:5px 12px;"
-                    f"border-radius:999px;font-size:11px;font-weight:500'>"
-                    f"{remaining} send{'s' if remaining != 1 else ''} remaining this session</span>",
-                    unsafe_allow_html=True,
-                )
+    # Send-state pill
+    if not resend_ready:
+        st.markdown(
+            '<span class="pill pill-muted">Sending disabled · server has no Resend key</span>',
+            unsafe_allow_html=True,
+        )
+    else:
+        remaining = MAX_SENDS - st.session_state["sends_this_session"]
+        st.markdown(
+            f'<span class="pill pill-info">{remaining} send{"s" if remaining != 1 else ""} remaining this session</span>',
+            unsafe_allow_html=True,
+        )
 
     def _valid_email(s: str) -> bool:
         return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", s or ""))
@@ -437,12 +603,28 @@ with tab_send:
                 result = send_via_resend(draft.subject, draft.html, recipient)
             if result.ok:
                 st.session_state["sends_this_session"] += 1
-                st.success(f"✓ {result.detail}")
-                if result.message_id:
-                    st.caption(f"Message ID: `{result.message_id}`")
+                st.success(f"✓ Sent to {recipient}")
                 st.caption(
-                    "Sender appears as `onboarding@resend.dev` — Resend's "
-                    "shared demo sender. Check spam if you don't see it."
+                    f"Message ID: `{result.message_id}` · Sender: onboarding@resend.dev "
+                    "(Resend's shared demo domain). Check spam if you don't see it within a minute."
                 )
+                st.balloons()
             else:
                 st.error(result.detail)
+
+
+# ---------------------------------------------------------------------------
+# Footer
+# ---------------------------------------------------------------------------
+
+st.markdown(
+    """
+    <div style="margin-top:60px;padding-top:24px;border-top:1px solid #e2e8f0;
+                text-align:center;font-size:12px;color:#94a3b8">
+      Built as a take-home AI-automation showcase ·
+      <a href="https://github.com/rmptue/rate-sheet-diff-agent"
+         style="color:#4f46e5;text-decoration:none;font-weight:500">View source on GitHub →</a>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
