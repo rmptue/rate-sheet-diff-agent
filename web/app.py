@@ -552,7 +552,10 @@ with right:
         <div class="send-card">
           <div class="send-card-title">✉️  Email this to yourself</div>
           <div class="send-card-desc">
-            {"Sends a real email via Resend. Recipient is locked to whatever you type below — no relay. "
+            {"Sends a real email via Resend's free demo sender (<code>onboarding@resend.dev</code>). "
+             "<b>Free-tier note:</b> until a custom domain is verified at "
+             "<a href='https://resend.com/domains' target='_blank' style='color:#4338ca;font-weight:600'>resend.com/domains</a>, "
+             "Resend only delivers to the account-owner's email — other recipients get a 403. "
              f"Up to {MAX_SENDS} sends per browser session."
              if resend_ready else
              "Send is disabled — server has no RESEND_API_KEY. The preview above is the deliverable."}

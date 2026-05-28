@@ -86,12 +86,26 @@ def send_via_resend(subject: str, html: str, recipient: str,
             body: dict[str, Any] = json.loads(resp.read().decode("utf-8"))
             return ResendResult(True, f"Sent to {recipient}", message_id=body.get("id"))
     except urllib.error.HTTPError as e:
+        raw = ""
         try:
-            err_body = json.loads(e.read().decode("utf-8"))
-            msg = err_body.get("message") or err_body.get("error") or str(err_body)
+            raw = e.read().decode("utf-8", errors="replace")
         except Exception:
-            msg = e.reason
-        return ResendResult(False, f"Resend API error ({e.code}): {msg}")
+            raw = ""
+        # Resend returns JSON like {"statusCode": 403, "name": "validation_error",
+        # "message": "You can only send testing emails to your own email ..."}.
+        # Extract the human message no matter how it's nested.
+        msg = e.reason or "Forbidden"
+        try:
+            body = json.loads(raw)
+            msg = (body.get("message")
+                   or body.get("error")
+                   or (body.get("error", {}).get("message") if isinstance(body.get("error"), dict) else None)
+                   or raw[:300]
+                   or msg)
+        except Exception:
+            if raw:
+                msg = raw[:300]
+        return ResendResult(False, f"Resend {e.code}: {msg}")
     except urllib.error.URLError as e:
         return ResendResult(False, f"Network error reaching Resend: {e.reason}")
     except Exception as e:  # noqa: BLE001
