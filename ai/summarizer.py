@@ -111,12 +111,20 @@ def summarize_diff(diff: DiffResult) -> EmailDraft:
     client = Anthropic(api_key=api_key)
     diff_json = json.dumps(diff.to_json_dict(), default=str, indent=2)
 
-    msg = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=2000,
-        system=SUMMARY_PROMPT_V1,
-        messages=[{"role": "user", "content": f"Diff JSON:\n```json\n{diff_json}\n```"}],
-    )
+    # Any API error (invalid key, rate limit, network, etc.) must NOT crash
+    # the request — we degrade to the deterministic renderer instead. The
+    # deployed demo should always show something useful.
+    try:
+        msg = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=2000,
+            system=SUMMARY_PROMPT_V1,
+            messages=[{"role": "user", "content": f"Diff JSON:\n```json\n{diff_json}\n```"}],
+        )
+    except Exception as e:  # noqa: BLE001 — intentionally broad: any failure falls back.
+        fallback = _render_fallback(diff)
+        fallback.source = f"fallback-after-api-error: {type(e).__name__}"
+        return fallback
     text = "".join(block.text for block in msg.content if getattr(block, "type", "") == "text").strip()
 
     # Tolerate models that wrap their JSON in a fenced code block.
