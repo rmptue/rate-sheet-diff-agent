@@ -1,10 +1,20 @@
+# Native Streamlit theming. These values are honored by Streamlit's
+# internals and survive every CSS-injection war, which is why we lean on
+# them as the foundation rather than trying to overwrite component styles.
+
 [theme]
 base = "light"
-primaryColor = "#1f6feb"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f5f7fa"
-textColor = "#1a1a1a"
+primaryColor = "#4f46e5"
+backgroundColor = "#fafafa"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0f172a"
+font = "sans serif"
 
 [server]
 headless = true
 enableXsrfProtection = true
+enableCORS = false
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = true
